@@ -1,0 +1,1 @@
+"""Replaceable text embedding providers."""
