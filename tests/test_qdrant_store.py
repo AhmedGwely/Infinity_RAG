@@ -103,6 +103,20 @@ def test_collection_creation_is_idempotent_for_missing_collection() -> None:
     client.close()
 
 
+def test_store_can_refuse_to_create_a_missing_collection() -> None:
+    client = QdrantClient(":memory:")
+
+    with pytest.raises(RuntimeError, match="does not exist"):
+        QdrantStore(
+            Settings(collection_name="read_only_missing"),
+            client=client,
+            create_if_missing=False,
+        )
+
+    assert client.get_collections().collections == []
+    client.close()
+
+
 def test_upsert_accepts_empty_input_and_rejects_mismatched_counts() -> None:
     client = QdrantClient(":memory:")
     store = make_store(client)

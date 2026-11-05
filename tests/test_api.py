@@ -106,6 +106,7 @@ def test_query_returns_grounded_answer_and_structured_sources() -> None:
         "citation_id": "S1",
         "document_name": "Mk6ES Manual",
         "document_id": "doc-1",
+        "passage": "Engineering evidence for doc-1.",
         "pdf_pages": [12, 13],
         "printed_pages": [9],
         "source_pages": [
@@ -229,6 +230,7 @@ def test_query_response_schema_contains_answer_and_sources() -> None:
 
     assert response.status_code == 200
     assert set(response.json()) == {"answer", "sources"}
+    assert response.json()["sources"][0]["passage"] == "Engineering evidence for doc-1."
     assert set(response.json()["sources"][0]) == {
         "citation_id",
         "document_name",
@@ -239,4 +241,5 @@ def test_query_response_schema_contains_answer_and_sources() -> None:
         "section_number",
         "section_title",
         "chunk_id",
+        "passage",
     }

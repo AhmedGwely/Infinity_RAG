@@ -38,17 +38,26 @@ class QdrantStore:
         settings: Settings | None = None,
         *,
         client: QdrantClient | None = None,
+        create_if_missing: bool = True,
     ) -> None:
         self.settings = settings or load_settings()
         self.collection_name = self.settings.collection_name
-        self._client = client or QdrantClient(
-            url=self.settings.qdrant_url,
-            api_key=self.settings.qdrant_api_key,
+        self._client = (
+            client
+            if client is not None
+            else QdrantClient(
+                url=self.settings.qdrant_url,
+                api_key=self.settings.qdrant_api_key,
+            )
         )
         if not any(
             collection.name == self.collection_name
             for collection in self._client.get_collections().collections
         ):
+            if not create_if_missing:
+                raise RuntimeError(
+                    f"Qdrant collection {self.collection_name!r} does not exist"
+                )
             self._client.create_collection(
                 collection_name=self.collection_name,
                 vectors_config=models.VectorParams(

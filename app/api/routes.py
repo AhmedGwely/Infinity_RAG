@@ -44,6 +44,7 @@ def create_app(
         citation_id: str
         document_name: str
         document_id: str
+        passage: str
         pdf_pages: list[int]
         printed_pages: list[int]
         source_pages: list[SourcePage]
@@ -155,6 +156,7 @@ def create_app(
                     document_name=metadata.document_name.strip()
                     or Path(metadata.source_file).name,
                     document_id=metadata.document_id,
+                    passage=hits[source_id - 1].chunk.text,
                     pdf_pages=pdf_pages,
                     printed_pages=printed_pages,
                     source_pages=[
