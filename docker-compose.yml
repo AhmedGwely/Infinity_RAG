@@ -1,0 +1,148 @@
+# INFINITY AI platform.
+#   Start:  .\start.ps1            (or: docker compose up -d --build)
+#   Stop:   .\stop.ps1             (data is kept)
+# Your existing Qdrant container (infinity-qdrant) is NOT managed here: it is reached through the published host
+# port, so its container, storage volume and the rd_engineering collection are never recreated or modified.
+name: infinity
+
+x-backend-env: &backend-env
+  # One source of truth: the app builds its (percent-encoded) connection URL from these, see backend/infinity/config.py.
+  # Do NOT add a hand-built DATABASE_URL here; it breaks on passwords containing @ : / # ? % $ and can drift from postgres.
+  POSTGRES_HOST: postgres
+  POSTGRES_PORT: "5432"
+  POSTGRES_USER: infinity
+  POSTGRES_DB: infinity
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run start.ps1 to generate .env}
+  REDIS_URL: redis://redis:6379/0
+  PLATFORM_QDRANT_URL: ${PLATFORM_QDRANT_URL:-http://host.docker.internal:6333}
+  QDRANT_API_KEY: ${QDRANT_API_KEY:-}
+  COLLECTION_NAME: ${COLLECTION_NAME:-rd_engineering}
+  QDRANT_ALLOW_CREATE: ${QDRANT_ALLOW_CREATE:-true}
+  EMBEDDER_URL: http://embedder:8100
+  APP_SECRET_KEY: ${APP_SECRET_KEY:?run start.ps1 to generate .env}
+  BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-admin@infinity.local}
+  BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-}
+  COOKIE_SECURE: ${COOKIE_SECURE:-false}
+  ALLOW_PRIVATE_NETWORK_SOURCES: ${ALLOW_PRIVATE_NETWORK_SOURCES:-false}
+  LEGACY_DOCUMENT_VISIBILITY: ${LEGACY_DOCUMENT_VISIBILITY:-internal}
+  LLM_PROVIDER: ${LLM_PROVIDER:-gemini}
+  LLM_MODEL: ${LLM_MODEL:-qwen3:8b}
+  GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+  GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.8-flash}
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  PLATFORM_OLLAMA_URL: ${PLATFORM_OLLAMA_URL:-http://host.docker.internal:11434}
+  UPLOAD_DIR: /data/uploads
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: infinity
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run start.ps1 to generate .env}
+      POSTGRES_DB: infinity
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U infinity -d infinity"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    mem_limit: 768m
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "128mb", "--maxmemory-policy", "volatile-lru"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    mem_limit: 192m
+
+  embedder:
+    build:
+      context: .
+      dockerfile: embedder/Dockerfile
+    image: infinity-embedder:local
+    restart: unless-stopped
+    environment:
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-BAAI/bge-m3}
+      EMBEDDER_THREADS: ${EMBEDDER_THREADS:-6}
+    volumes:
+      - hfcache:/models          # model is downloaded once (~2.3 GB) and kept across restarts
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8100/health',timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    mem_limit: 5g
+
+  api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    image: infinity-backend:local
+    restart: unless-stopped
+    command: ["api"]
+    environment: *backend-env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - uploads:/data/uploads
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+    mem_limit: 1g
+
+  worker:
+    image: infinity-backend:local
+    restart: unless-stopped
+    command: ["worker"]
+    environment: *backend-env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - uploads:/data/uploads
+    depends_on:
+      api: { condition: service_healthy }
+    mem_limit: 1536m
+
+  web:
+    build:
+      context: ./web
+    image: infinity-web:local
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-8088}:80"
+    depends_on:
+      api: { condition: service_healthy }
+
+  # OPTIONAL: only for a fresh machine with no existing Qdrant. Not started by default.
+  #   docker compose --profile bundled-qdrant up -d     (then set PLATFORM_QDRANT_URL=http://qdrant:6333)
+  qdrant:
+    profiles: ["bundled-qdrant"]
+    image: qdrant/qdrant:${QDRANT_IMAGE_TAG:-v1.20.0}
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${BUNDLED_QDRANT_PORT:-6343}:6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
+
+volumes:
+  pgdata:
+  redisdata:
+  uploads:
+  hfcache:
+  qdrant_data:

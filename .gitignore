@@ -18,3 +18,13 @@ documents/**
 *.sqlite*
 *.db
 models/
+
+# platform
+backups/
+web/dist/
+web/node_modules/
+web/test/.out.cjs
+
+# Environment secrets and backups
+.env.*
+!.env.example

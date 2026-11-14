@@ -93,10 +93,24 @@ class OpenAIProvider:
 
     def complete(self, prompt: str) -> str:
         """Generate from the exact grounded prompt supplied by AnswerGenerator."""
+        return self._chat([{"role": "user", "content": prompt}])
+
+    def complete_with_instructions(self, prompt: str, *, system_instruction: str) -> str:
+        """Generate with trusted policy in the system role, separate from untrusted input."""
+        if not system_instruction.strip():
+            raise ValueError("system_instruction must not be empty")
+        return self._chat(
+            [
+                {"role": "system", "content": system_instruction},
+                {"role": "user", "content": prompt},
+            ]
+        )
+
+    def _chat(self, messages: list[dict[str, str]]) -> str:
         try:
             response = self._client.chat.completions.create(
                 model=self.model,
-                messages=[{"role": "user", "content": prompt}],
+                messages=messages,
             )
         except Exception as error:
             logger.error("OpenAI generation request failed (%s).", type(error).__name__)
@@ -122,7 +136,19 @@ class OllamaProvider:
 
     def complete(self, prompt: str) -> str:
         """Send the composed grounded prompt to the configured local Ollama host."""
-        body = json.dumps({"model": self.model, "prompt": prompt, "stream": False}).encode("utf-8")
+        return self._generate(prompt, None)
+
+    def complete_with_instructions(self, prompt: str, *, system_instruction: str) -> str:
+        """Use Ollama's separate system field for trusted policy text."""
+        if not system_instruction.strip():
+            raise ValueError("system_instruction must not be empty")
+        return self._generate(prompt, system_instruction)
+
+    def _generate(self, prompt: str, system: str | None) -> str:
+        payload: dict[str, object] = {"model": self.model, "prompt": prompt, "stream": False}
+        if system is not None:
+            payload["system"] = system
+        body = json.dumps(payload).encode("utf-8")
         request = Request(
             f"{self.base_url}/api/generate",
             data=body,
